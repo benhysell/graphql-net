@@ -9,6 +9,8 @@ using System.Threading.Tasks;
 using GraphQL.Net;
 using NUnit.Framework;
 using Tests.EF.Migrations;
+using Newtonsoft.Json;
+using Ploeh.AutoFixture;
 
 namespace Tests.EF
 {
@@ -72,8 +74,7 @@ namespace Tests.EF
             user.AddField(u => u.Id);
             user.AddField(u => u.Name);
             user.AddField(u => u.Account);
-            user.AddField(u => u.NullRef);
-            user.AddField(u => u.ServerTimestamp);
+            user.AddField(u => u.NullRef);            
             user.AddField("total", (db, u) => db.Users.Count());
             user.AddField("accountPaid", (db, u) => u.Account.Paid);
             user.AddPostField("abc", () => GetAbcPostField());
@@ -82,6 +83,19 @@ namespace Tests.EF
             schema.AddType<Sub>().AddField(s => s.Id);
             schema.AddListField("users", db => db.Users);
             schema.AddField("user", new { id = Guid.Empty }, (db, args) => db.Users.FirstOrDefault(u => u.Id == args.id));
+            schema.AddMutation("addUser",
+               new
+               {
+                   newUserToAdd = new User()
+               },
+               (db, args) => db.Users.AsQueryable(),
+               (db, args) =>
+               {
+                   db.Users.Add(args.newUserToAdd);
+                   db.SaveChanges();
+               }
+               );
+
         }
 
         private static string GetAbcPostField() => "easy as 123"; // mimic an in-memory function
@@ -158,6 +172,23 @@ namespace Tests.EF
         public void NullPropagation() => GenericTests.NullPropagation(CreateDefaultContext());
 
         [Test]
+        public static void SimpleMutationAddUser()
+        {
+            var fixture = new Fixture();
+            fixture.Behaviors.Clear();
+            fixture.Behaviors.Add(new OmitOnRecursionBehavior());
+            fixture.Customize<User>(x => x.Without(c => c.Id));
+            var newUser = fixture.Create<User>();
+            var gql = CreateDefaultContext();
+            var results = gql.ExecuteQuery("mutation { addUser(newUserToAdd:"+JsonConvert.SerializeObject(newUser) +") { id } }");
+            
+            //Test.DeepEquals(results, "{ mutate: { id: 1, value: 5 } }");
+
+            //var results2 = gql.ExecuteQuery("mutation { mutate(id:1,newVal:123) { id, value } }");
+            //Test.DeepEquals(results2, "{ mutate: { id: 1, value: 123 } }");
+        }
+
+        [Test]
         public void AddAllFields()
         {
             var schema = GraphQL<EfContext>.CreateDefaultSchema(() => new EfContext());
@@ -207,9 +238,6 @@ namespace Tests.EF
 
             public int? NullRefId { get; set; }
             public NullRef NullRef { get; set; }
-
-            [Timestamp]
-            public byte[] ServerTimestamp { get; set; }
         }
 
         public class Account
